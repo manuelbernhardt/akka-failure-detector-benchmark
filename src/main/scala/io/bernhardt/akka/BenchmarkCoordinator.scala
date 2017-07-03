@@ -54,12 +54,12 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
   }
 
   when(Benchmarking) {
-    case Event(MemberUnreachabilityDetected(member, timestamp), data: BenchmarkData) =>
-      val timestamps = data.unreachabilityTimestamps + (member -> timestamp)
-      if (timestamps.size == expectedMembers - 1) {
+    case Event(MemberUnreachabilityDetected(member, duration), data: BenchmarkData) =>
+      val durations = data.detectionDurations + (member -> duration)
+      if (durations.size == expectedMembers - 1) {
         self ! RoundFinished
       }
-      stay() using data.copy(unreachabilityTimestamps = timestamps)
+      stay() using data.copy(detectionDurations = durations)
     case Event(RoundFinished, data: BenchmarkData) =>
       onRoundFinished(data)
     case Event(MemberUp(member), data: BenchmarkData) =>
@@ -87,9 +87,8 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
   private def onRoundFinished(data: BenchmarkData) = {
     log.info("Round {} done".stripMargin, data.round)
-    data.unreachabilityTimestamps.values.foreach { timestamp =>
-      val duration = (timestamp - data.start).nanos.toMicros
-      detectionTiming.recordValue(duration)
+    data.detectionDurations.values.foreach { durationNanos =>
+      detectionTiming.recordValue(durationNanos.nanos.toMicros)
     }
 
     if (data.round == 10) {
@@ -106,7 +105,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
           |
           |50% percentile: ${detectionTiming.getValueAtPercentile(50)} µs
           |90% percentile: ${detectionTiming.getValueAtPercentile(90)} µs
-          |59% percentile: ${detectionTiming.getValueAtPercentile(59)} µs
+          |99% percentile: ${detectionTiming.getValueAtPercentile(99)} µs
           |
           |Detection latencies (µs):
           |
@@ -155,12 +154,12 @@ object BenchmarkCoordinator {
 
   case class WaitingData(members: Set[Member], round: Int) extends Data
 
-  case class BenchmarkData(round: Int, target: UniqueAddress, unreachabilityTimestamps: Map[UniqueAddress, Long] = Map.empty, members: Set[Member], start: Long = System.nanoTime()) extends Data
+  case class BenchmarkData(round: Int, target: UniqueAddress, detectionDurations: Map[UniqueAddress, Long] = Map.empty, members: Set[Member], start: Long = System.nanoTime()) extends Data
 
   // events
   case object RoundFinished
 
-  case class MemberUnreachabilityDetected(detectedBy: UniqueAddress, timestamp: Long)
+  case class MemberUnreachabilityDetected(detectedBy: UniqueAddress, duration: Long)
 
 
 }

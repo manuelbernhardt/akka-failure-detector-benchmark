@@ -16,14 +16,14 @@
         </encoder>
     </appender>
 
-    <logger name="akka" level="info" additivity="false" />
+    <logger name="akka" level="debug" additivity="false" />
 
     <logger name="io.bernhardt.akka" level="debug" additivity="false">
         <appender-ref ref="console"/>
         <appender-ref ref="file"/>
     </logger>
 
-    <root level="info">
+    <root level="debug">
         <appender-ref ref="console"/>
         <appender-ref ref="file"/>
     </root>

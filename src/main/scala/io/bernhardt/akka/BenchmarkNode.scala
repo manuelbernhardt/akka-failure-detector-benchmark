@@ -10,7 +10,9 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
 
   var systemManager: Option[ActorRef] = None
 
-  var expectedUnrachable: Option[Member] = None
+  var expectedUnreachable: Option[Member] = None
+
+  var start: Option[Long] = None
 
   val cluster = Cluster(context.system)
 
@@ -19,7 +21,6 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
     log.info("Started node at {}", cluster.selfUniqueAddress)
     cluster.subscribe(self, ClusterEvent.initialStateAsEvents, classOf[UnreachableMember])
   }
-
 
   override def postStop() = {
     cluster.unsubscribe(self)
@@ -37,14 +38,17 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
     case ShouldShutdown =>
       systemManager = Some(sender())
     case ExpectUnreachable(member) =>
+      start = Some(System.nanoTime())
+      expectedUnreachable = Some(member)
       log.info("Expecting {} to become unreachable", member.address)
-      expectedUnrachable = Some(member)
-    case UnreachableMember(member) if Some(member) == expectedUnrachable =>
+    case UnreachableMember(member) if Some(member) == expectedUnreachable =>
       log.info("Reporting unreachability of {} to coordinator", member.address)
-      coordinator ! MemberUnreachabilityDetected(cluster.selfUniqueAddress, System.nanoTime())
-      expectedUnrachable = None
+      val duration = start.map(s => System.nanoTime() - s).getOrElse(0l)
+      coordinator ! MemberUnreachabilityDetected(cluster.selfUniqueAddress, duration)
+      start = None
+      expectedUnreachable = None
     case UnreachableMember(member) =>
-      log.info("OTHER UNREACHABLE !?> {}, {}", member, expectedUnrachable)
+      log.info("OTHER UNREACHABLE {}, {}", member, expectedUnreachable)
   }
 }
 
