@@ -2,6 +2,7 @@ package io.bernhardt.akka
 
 import java.io.{ByteArrayOutputStream, PrintStream}
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
 
 import akka.actor.{Actor, ActorLogging, FSM, Props}
 import akka.cluster.ClusterEvent._
@@ -19,6 +20,8 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
   val expectedMembers = context.system.settings.config.getInt("benchmark.expected-members")
 
+  val warmupTime = context.system.settings.config.getDuration("benchmark.warmup-time")
+
   val rounds = context.system.settings.config.getInt("benchmark.rounds")
 
   val detectionTiming = new Histogram(10.seconds.toMicros, 3)
@@ -33,9 +36,11 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     cluster.unsubscribe(self)
   }
 
-  startWith(Waiting, WaitingData(Set.empty, 1))
+  startWith(Idle, WaitingData(Set.empty, 1))
 
-  when(Idle) {
+  when(Idle, Duration.create(warmupTime.getSeconds, TimeUnit.SECONDS)) {
+    case Event(StateTimeout, data) =>
+      goto(Waiting) using data
     case Event(any, _) =>
       log.info(any.toString)
       stay()
