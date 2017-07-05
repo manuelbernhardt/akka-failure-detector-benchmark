@@ -8,7 +8,7 @@ import akka.actor.{Actor, ActorLogging, FSM, Props}
 import akka.cluster.ClusterEvent._
 import akka.cluster.{Cluster, ClusterEvent, Member, UniqueAddress}
 import io.bernhardt.akka.BenchmarkCoordinator._
-import io.bernhardt.akka.BenchmarkNode.{BecomeUnreachable, ExpectUnreachable}
+import io.bernhardt.akka.BenchmarkNode.{BecomeUnreachable, ExpectUnreachable, Reconfigure}
 import org.HdrHistogram.Histogram
 
 import scala.concurrent.duration._
@@ -20,11 +20,22 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
   val expectedMembers = context.system.settings.config.getInt("benchmark.expected-members")
 
-  val warmupTime = context.system.settings.config.getDuration("benchmark.warmup-time")
+  val warmupTime = Duration.create(context.system.settings.config.getDuration("benchmark.warmup-time").getSeconds, TimeUnit.SECONDS)
 
   val rounds = context.system.settings.config.getInt("benchmark.rounds")
 
+  val plan: List[RoundConfiguration] = {
+    import scala.collection.JavaConverters._
+    context.system.settings.config.getConfigList("benchmark.plan").asScala.map { c =>
+      RoundConfiguration(c.getString("fd"), c.getDouble("threshold"))
+    }
+  }.toList
+
+  val step = Option(System.getProperty("benchmark.step")).getOrElse("0").toInt
+
   val detectionTiming = new Histogram(10.seconds.toMicros, 3)
+
+  var warmedUp: Boolean = false
 
   override def preStart() = {
     super.preStart()
@@ -36,20 +47,15 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     cluster.unsubscribe(self)
   }
 
-  startWith(Idle, WaitingData(Set.empty, 1))
+  startWith(Waiting, WaitingData(Set.empty, 1))
 
-  when(Idle, Duration.create(warmupTime.getSeconds, TimeUnit.SECONDS)) {
-    case Event(StateTimeout, data) =>
-      goto(Waiting) using data
-    case Event(any, _) =>
-      log.info(any.toString)
-      stay()
-  }
-
-  when(Waiting) {
+  when(Waiting, warmupTime) {
+    case Event(StateTimeout, data: WaitingData) =>
+      warmedUp = true
+      startRound(data.members, data.round)
     case Event(MemberUp(member), data: WaitingData) =>
       val members = data.members + member
-      if (members.size == expectedMembers) {
+      if (members.size == expectedMembers && warmedUp) {
         startRound(members, data.round)
       } else {
         stay() using data.copy(members = members)
@@ -76,18 +82,24 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       stay() using data.copy(members = data.members - member)
   }
 
+  when(Done) {
+    case Event(any, _) =>
+      log.info(any.toString)
+      stay()
+  }
+
   private def startRound(members: Set[Member], round: Int) = {
     val candidates = members.filterNot(_.address == cluster.selfAddress)
-    val member = candidates.toList(Random.nextInt(candidates.size))
+    val target = candidates.toList(Random.nextInt(candidates.size))
 
     log.info(
       """
         |*********************
-        |Starting benchmarking round {} with {} member nodes, making {} unreachable
-        |*********************""".stripMargin, round, expectedMembers, member.address)
-    informMembers(member, members)
-    shutdownMember(member)
-    goto(Benchmarking) using BenchmarkData(round = round, target = member.uniqueAddress, members = members)
+        |Starting benchmarking round {} / {} with {} member nodes, making {} unreachable
+        |*********************""".stripMargin, round, rounds, expectedMembers, target.address)
+    sendMessageToAll(members, ExpectUnreachable(target))
+    shutdownMember(target)
+    goto(Benchmarking) using BenchmarkData(round = round, target = target.uniqueAddress, members = members)
   }
 
   private def onRoundFinished(data: BenchmarkData) = {
@@ -97,29 +109,8 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     }
 
     if (data.round == rounds) {
-      val out = new ByteArrayOutputStream()
-      detectionTiming.outputPercentileDistribution({
-        new PrintStream(out)
-      }, 1.0)
-      val histogram = new String(out.toByteArray, StandardCharsets.UTF_8)
-      val report = s"""
-          |*********
-          |Benchmark report for ${cluster.settings.FailureDetectorImplementationClass}
-          |$expectedMembers nodes
-          |$rounds rounds
-          |
-          |50% percentile: ${detectionTiming.getValueAtPercentile(50)} µs
-          |90% percentile: ${detectionTiming.getValueAtPercentile(90)} µs
-          |99% percentile: ${detectionTiming.getValueAtPercentile(99)} µs
-          |
-          |Detection latencies (µs):
-          |
-          |$histogram
-          |*********
-        """.stripMargin
-      log.info(report)
-      Reporting.email(report, context.system)
-      goto(Idle)
+      reportRoundResults()
+      configureStep(data.members)
     } else {
       if (data.members.size < expectedMembers) {
         log.info("Waiting for enough members to join")
@@ -130,14 +121,55 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     }
   }
 
-  private def informMembers(target: Member, members: Set[Member]): Unit = {
+  private def sendMessageToAll(members: Set[Member], message: Any): Unit = {
     members.foreach { m =>
-      context.actorSelection(BenchmarkNode.path(m.address)) ! ExpectUnreachable(target)
+      context.actorSelection(BenchmarkNode.path(m.address)) ! message
     }
   }
 
   private def shutdownMember(member: Member): Unit = {
     context.actorSelection(BenchmarkNode.path(member.address)) ! BecomeUnreachable
+  }
+
+  private def reportRoundResults(): Unit = {
+    val out = new ByteArrayOutputStream()
+    detectionTiming.outputPercentileDistribution({
+      new PrintStream(out)
+    }, 1.0)
+    val histogram = new String(out.toByteArray, StandardCharsets.UTF_8)
+    val report =
+      s"""
+         |*********
+         |Benchmark report for ${cluster.settings.FailureDetectorImplementationClass}
+         |$expectedMembers nodes
+         |$rounds rounds
+         |
+         |Threshold: ${cluster.settings.FailureDetectorConfig.getDouble("threshold")}
+         |
+         |50% percentile: ${detectionTiming.getValueAtPercentile(50)} µs
+         |90% percentile: ${detectionTiming.getValueAtPercentile(90)} µs
+         |99% percentile: ${detectionTiming.getValueAtPercentile(99)} µs
+         |
+         |Detection latencies (µs):
+         |
+         |$histogram
+         |*********
+        """.stripMargin
+    log.info(report)
+    Reporting.email(report, context.system)
+  }
+
+  private def configureStep(members: Set[Member]) = {
+    val nextStep = step + 1
+    if (nextStep == plan.size) {
+      log.info("Benchmark done!")
+      goto(Done)
+    } else {
+      System.setProperty("benchmark.step", nextStep.toString)
+      sendMessageToAll(members, Reconfigure(plan(nextStep).implementationClass, plan(nextStep).threshold))
+      goto(Waiting)
+    }
+
   }
 
 }
@@ -151,15 +183,17 @@ object BenchmarkCoordinator {
 
   case object Waiting extends State
 
-  case object Idle extends State
-
   case object Benchmarking extends State
+
+  case object Done extends State
 
   sealed trait Data
 
   case class WaitingData(members: Set[Member], round: Int) extends Data
 
   case class BenchmarkData(round: Int, target: UniqueAddress, detectionDurations: Map[UniqueAddress, Long] = Map.empty, members: Set[Member], start: Long = System.nanoTime()) extends Data
+
+  case class RoundConfiguration(implementationClass: String, threshold: Double)
 
   // events
   case object RoundFinished

@@ -4,7 +4,7 @@ import akka.actor.{Actor, ActorLogging, ActorRef, Address, Props, RootActorPath}
 import akka.cluster.ClusterEvent.UnreachableMember
 import akka.cluster.{Cluster, ClusterEvent, Member}
 import io.bernhardt.akka.BenchmarkCoordinator.MemberUnreachabilityDetected
-import io.bernhardt.akka.BenchmarkNode.{BecomeUnreachable, ExpectUnreachable, ShouldShutdown}
+import io.bernhardt.akka.BenchmarkNode.{BecomeUnreachable, ExpectUnreachable, Reconfigure, AwaitShutdown}
 
 class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
 
@@ -28,15 +28,15 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
   }
 
   def receive = {
+    case AwaitShutdown =>
+      systemManager = Some(sender())
     case BecomeUnreachable =>
       log.info("Becoming unreachable by shutting down actor system")
-      systemManager.map { r =>
-        r ! Shutdown
-      } getOrElse {
-        log.error("No reference to system manager")
-      }
-    case ShouldShutdown =>
-      systemManager = Some(sender())
+      shutdown()
+    case Reconfigure(implementationClass, threshold) =>
+      System.setProperty("THRESHOLD", threshold.toString)
+      System.setProperty("FD_IMPLEMENTATION_CLASS", implementationClass)
+      shutdown()
     case ExpectUnreachable(member) =>
       start = Some(System.nanoTime())
       expectedUnreachable = Some(member)
@@ -50,6 +50,14 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
     case UnreachableMember(member) =>
       log.info("OTHER UNREACHABLE {}, {}", member, expectedUnreachable)
   }
+
+  def shutdown(): Unit = {
+    systemManager.map { r =>
+      r ! Shutdown
+    } getOrElse {
+      log.error("No reference to system manager")
+    }
+  }
 }
 
 object BenchmarkNode {
@@ -62,6 +70,8 @@ object BenchmarkNode {
 
   case class ExpectUnreachable(member: Member)
 
-  case object ShouldShutdown
+  case object AwaitShutdown
+
+  case class Reconfigure(implementationClass: String, threshold: Double)
 
 }
