@@ -96,7 +96,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       detectionTiming.recordValue(durationNanos.nanos.toMicros)
     }
 
-    if (data.round == 10) {
+    if (data.round == rounds) {
       val out = new ByteArrayOutputStream()
       detectionTiming.outputPercentileDistribution({
         new PrintStream(out)
