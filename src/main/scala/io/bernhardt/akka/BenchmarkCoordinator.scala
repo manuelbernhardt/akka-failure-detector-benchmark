@@ -4,9 +4,11 @@ import java.io.{ByteArrayOutputStream, PrintStream}
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 
-import akka.actor.{Actor, ActorLogging, FSM, Props}
+import akka.actor.{Actor, ActorLogging, Address, FSM, Props}
 import akka.cluster.ClusterEvent._
 import akka.cluster.{Cluster, ClusterEvent, Member, UniqueAddress}
+import akka.pattern.{AskTimeoutException, ask, pipe}
+import akka.util.Timeout
 import io.bernhardt.akka.BenchmarkCoordinator._
 import io.bernhardt.akka.BenchmarkNode.{BecomeUnreachable, ExpectUnreachable, Reconfigure}
 import org.HdrHistogram.Histogram
@@ -15,6 +17,8 @@ import scala.concurrent.duration._
 import scala.util.Random
 
 class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging {
+
+  import context.dispatcher
 
   val cluster = Cluster(context.system)
 
@@ -35,8 +39,6 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
   val detectionTiming = new Histogram(10.seconds.toMicros, 3)
 
-  var warmedUp: Boolean = false
-
   override def preStart() = {
     super.preStart()
     cluster.subscribe(self, ClusterEvent.InitialStateAsEvents, classOf[MemberUp], classOf[MemberRemoved], classOf[UnreachableMember], classOf[ReachableMember])
@@ -47,21 +49,38 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     cluster.unsubscribe(self)
   }
 
-  startWith(Waiting, WaitingData(Set.empty, 1))
+  startWith(WaitingForMembers, WaitingData(Set.empty, 1, warmedUp = false))
 
-  when(Waiting, warmupTime) {
+  when(WaitingForMembers, warmupTime) {
     case Event(StateTimeout, data: WaitingData) =>
-      warmedUp = true
-      startRound(data.members, data.round)
+      startIfReady(data, warmedUp = true)
     case Event(MemberUp(member), data: WaitingData) =>
-      val members = data.members + member
-      if (members.size == expectedMembers && warmedUp) {
-        startRound(members, data.round)
-      } else {
-        stay() using data.copy(members = members)
-      }
+      startIfReady(data.copy(members = data.members + member), warmedUp = data.warmedUp)
     case Event(MemberRemoved(member, _), data: WaitingData) =>
+      log.warning(s"Member ${member.address} removed")
       stay() using data.copy(members = data.members - member)
+  }
+
+  when(PreparingBenchmark) {
+    case Event(MemberUp(member), data: BenchmarkData) =>
+      val members = data.members + member
+      stay() using data.copy(members = members)
+    case Event(MemberRemoved(member, _), data: BenchmarkData) =>
+      log.warning(s"Member ${member.address} removed")
+      stay() using data.copy(members = data.members - member)
+    case Event(ExpectUnreachableAck(address), data: BenchmarkData) =>
+      val acked = data.ackedExpectUnreachable + address
+      log.debug("{}/{} members acked benchmark start", acked.size, expectedMembers)
+      if (acked.size == expectedMembers) {
+        shutdownMember(data.target.address)
+        goto(Benchmarking) using data.copy(ackedExpectUnreachable = acked)
+      } else {
+        stay() using data.copy(ackedExpectUnreachable = acked)
+      }
+    case Event(MessageDeliveryTimeout(address, message), data) =>
+      log.info("Redelivering message {} to {}", message, address)
+      sendMessage(address, message)
+      stay() using data
   }
 
   when(Benchmarking) {
@@ -79,6 +98,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       cluster.down(member.address)
       stay() using data.copy(members = data.members - member)
     case Event(MemberRemoved(member, _), data: BenchmarkData) =>
+      log.warning(s"Member ${member.address} removed")
       stay() using data.copy(members = data.members - member)
   }
 
@@ -88,18 +108,31 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       stay()
   }
 
+  onTransition { case from -> to =>
+    log.info("Transitioning from {} to {}", from, to)
+  }
+
+  private def startIfReady(data: WaitingData, warmedUp: Boolean) = {
+    if (data.members.size == expectedMembers && warmedUp) {
+      log.info(s"${data.members.size}/$expectedMembers members joined, preparing benchmark")
+      startRound(data.members, data.round)
+    } else {
+      log.info(s"Not starting yet as we only have ${data.members.size}/$expectedMembers members and warmup is $warmedUp")
+      stay() using data.copy(warmedUp = warmedUp)
+    }
+  }
+
   private def startRound(members: Set[Member], round: Int) = {
     val candidates = members.filterNot(_.address == cluster.selfAddress)
     val target = candidates.toList(Random.nextInt(candidates.size))
 
     log.info(
-      """
-        |*********************
-        |Starting benchmarking round {} / {} with {} member nodes, making {} unreachable
-        |*********************""".stripMargin, round, rounds, expectedMembers, target.address)
+      s"""
+         |*********************
+         |Starting benchmarking round $round/$rounds (step ${step + 1}/${plan.size}) with ${members.size}/$expectedMembers member nodes, making ${target.address} unreachable
+         |*********************""".stripMargin)
     sendMessageToAll(members, ExpectUnreachable(target))
-    shutdownMember(target)
-    goto(Benchmarking) using BenchmarkData(round = round, target = target.uniqueAddress, members = members)
+    goto(PreparingBenchmark) using BenchmarkData(round = round, target = target.uniqueAddress, members = members)
   }
 
   private def onRoundFinished(data: BenchmarkData) = {
@@ -114,7 +147,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     } else {
       if (data.members.size < expectedMembers) {
         log.info("Waiting for enough members to join")
-        goto(Waiting) using WaitingData(data.members, data.round + 1)
+        goto(WaitingForMembers) using WaitingData(data.members, data.round + 1, warmedUp = true)
       } else {
         startRound(data.members, data.round + 1)
       }
@@ -123,12 +156,21 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
   private def sendMessageToAll(members: Set[Member], message: Any): Unit = {
     members.foreach { m =>
-      context.actorSelection(BenchmarkNode.path(m.address)) ! message
+      sendMessage(m.uniqueAddress, message)
     }
   }
 
-  private def shutdownMember(member: Member): Unit = {
-    context.actorSelection(BenchmarkNode.path(member.address)) ! BecomeUnreachable
+  private def sendMessage(to: UniqueAddress, message: Any): Unit = {
+    implicit val timeout = Timeout(3.seconds)
+    val f = context.actorSelection(BenchmarkNode.path(to.address)) ? message
+    f.recover { case a: AskTimeoutException =>
+      log.warning(s"No answer from $to in $timeout")
+      MessageDeliveryTimeout(to, message)
+    } pipeTo self
+  }
+
+  private def shutdownMember(address: Address): Unit = {
+    context.actorSelection(BenchmarkNode.path(address)) ! BecomeUnreachable
   }
 
   private def reportRoundResults(): Unit = {
@@ -143,6 +185,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
          |Benchmark report for ${cluster.settings.FailureDetectorImplementationClass}
          |$expectedMembers nodes
          |$rounds rounds
+         |${step + 1} / ${plan.size} steps
          |
          |Threshold: ${cluster.settings.FailureDetectorConfig.getDouble("threshold")}
          |
@@ -167,7 +210,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     } else {
       System.setProperty("benchmark.step", nextStep.toString)
       sendMessageToAll(members, Reconfigure(plan(nextStep).implementationClass, plan(nextStep).threshold))
-      goto(Waiting)
+      goto(WaitingForMembers)
     }
 
   }
@@ -181,7 +224,9 @@ object BenchmarkCoordinator {
 
   sealed trait State
 
-  case object Waiting extends State
+  case object WaitingForMembers extends State
+
+  case object PreparingBenchmark extends State
 
   case object Benchmarking extends State
 
@@ -189,9 +234,9 @@ object BenchmarkCoordinator {
 
   sealed trait Data
 
-  case class WaitingData(members: Set[Member], round: Int) extends Data
+  case class WaitingData(members: Set[Member], round: Int, warmedUp: Boolean) extends Data
 
-  case class BenchmarkData(round: Int, target: UniqueAddress, detectionDurations: Map[UniqueAddress, Long] = Map.empty, members: Set[Member], start: Long = System.nanoTime()) extends Data
+  case class BenchmarkData(round: Int, target: UniqueAddress, detectionDurations: Map[UniqueAddress, Long] = Map.empty, members: Set[Member], start: Long = System.nanoTime(), ackedExpectUnreachable: Set[UniqueAddress] = Set.empty) extends Data
 
   case class RoundConfiguration(implementationClass: String, threshold: Double)
 
@@ -200,5 +245,10 @@ object BenchmarkCoordinator {
 
   case class MemberUnreachabilityDetected(detectedBy: UniqueAddress, duration: Long)
 
+  case class ExpectUnreachableAck(from: UniqueAddress)
+
+  case class ReconfigurationAck(from: UniqueAddress)
+
+  case class MessageDeliveryTimeout(member: UniqueAddress, msg: Any)
 
 }

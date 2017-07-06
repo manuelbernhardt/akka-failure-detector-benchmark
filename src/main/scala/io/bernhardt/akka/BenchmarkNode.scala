@@ -3,8 +3,8 @@ package io.bernhardt.akka
 import akka.actor.{Actor, ActorLogging, ActorRef, Address, Props, RootActorPath}
 import akka.cluster.ClusterEvent.UnreachableMember
 import akka.cluster.{Cluster, ClusterEvent, Member}
-import io.bernhardt.akka.BenchmarkCoordinator.MemberUnreachabilityDetected
-import io.bernhardt.akka.BenchmarkNode.{BecomeUnreachable, ExpectUnreachable, Reconfigure, AwaitShutdown}
+import io.bernhardt.akka.BenchmarkCoordinator.{ExpectUnreachableAck, MemberUnreachabilityDetected, ReconfigurationAck}
+import io.bernhardt.akka.BenchmarkNode.{AwaitShutdown, BecomeUnreachable, ExpectUnreachable, Reconfigure}
 
 class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
 
@@ -34,12 +34,16 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
       log.info("Becoming unreachable by shutting down actor system")
       shutdown()
     case Reconfigure(implementationClass, threshold) =>
-      System.setProperty("THRESHOLD", threshold.toString)
-      System.setProperty("FD_IMPLEMENTATION_CLASS", implementationClass)
-      shutdown()
+      log.info(s"Reconfiguring node to use $implementationClass with threshold $threshold")
+      sender() ! ReconfigurationAck
+      shutdown(Map(
+        "akka.cluster.failure-detector.threshold" -> threshold.toString,
+        "akka.cluster.failure-detector.implementation-class" -> implementationClass
+      ))
     case ExpectUnreachable(member) =>
       start = Some(System.nanoTime())
       expectedUnreachable = Some(member)
+      sender() ! ExpectUnreachableAck(cluster.selfUniqueAddress)
       log.info("Expecting {} to become unreachable", member.address)
     case UnreachableMember(member) if Some(member) == expectedUnreachable =>
       log.info("Reporting unreachability of {} to coordinator", member.address)
@@ -51,9 +55,9 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
       log.info("OTHER UNREACHABLE {}, {}", member, expectedUnreachable)
   }
 
-  def shutdown(): Unit = {
+  def shutdown(properties: Map[String, String] = Map.empty): Unit = {
     systemManager.map { r =>
-      r ! Shutdown
+      r ! Shutdown(properties)
     } getOrElse {
       log.error("No reference to system manager")
     }
