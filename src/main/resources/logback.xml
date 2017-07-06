@@ -18,6 +18,8 @@
 
     <logger name="akka" level="debug" additivity="false" />
 
+    <logger name="play.shaded.ahc" level="off" additivity="false" />
+
     <logger name="io.bernhardt.akka" level="debug" additivity="false">
         <appender-ref ref="console"/>
         <appender-ref ref="file"/>
