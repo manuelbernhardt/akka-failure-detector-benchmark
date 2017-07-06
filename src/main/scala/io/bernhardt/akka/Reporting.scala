@@ -10,6 +10,7 @@ object Reporting {
 
   def email(content: String, system: ActorSystem) = {
     val ws = StandaloneAhcWSClient()(ActorMaterializer()(system))
+    val hostname = system.settings.config.getString("akka.remote.netty.tcp.hostname")
 
     for {
       mailgunDomain <- Option(system.settings.config.getString("reporting.mailgun.domain"))
@@ -21,7 +22,7 @@ object Reporting {
         .post(Map(
           "from" -> s"postmaster@$mailgunDomain",
           "to" -> to,
-          "subject" -> s"Akka FD Benchmark results ${DateTime.now.toString()}",
+          "subject" -> s"Akka FD Benchmark results $hostname ${DateTime.now.toString()}",
           "text" -> content
         ))
     }
