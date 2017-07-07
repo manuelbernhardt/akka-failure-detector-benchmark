@@ -127,7 +127,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
   }
 
   private def startRound(members: Set[Member], round: Int) = {
-    val candidates = members.filterNot(_.address == cluster.selfAddress)
+    val candidates = members.filterNot(_.uniqueAddress == cluster.selfUniqueAddress)
     val target = candidates.toList(Random.nextInt(candidates.size))
 
     log.info(
