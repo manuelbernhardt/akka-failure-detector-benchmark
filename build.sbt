@@ -19,6 +19,7 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-cluster-tools" % akkaVer,
   "com.typesafe.akka" %% "akka-slf4j" % akkaVer,
   "ch.qos.logback"     % "logback-classic" % logbackVer,
+  "com.lightbend.akka" %% "akka-management-cluster-http" % "0.3",
   "de.heikoseeberger" %% "constructr" % "0.17.0",
   "com.tecsisa"       %% "constructr-coordination-consul" % "0.7.0",
   "org.hdrhistogram"   % "HdrHistogram" % "2.1.9",

@@ -1,6 +1,8 @@
 package io.bernhardt.akka
 
 import akka.actor.{ActorSystem, PoisonPill}
+import akka.cluster.Cluster
+import akka.cluster.http.management.ClusterHttpManagement
 import akka.cluster.singleton.{ClusterSingletonManager, ClusterSingletonManagerSettings, ClusterSingletonProxy, ClusterSingletonProxySettings}
 import akka.pattern.ask
 import akka.util.Timeout
@@ -44,6 +46,9 @@ object FailureDetectorBenchmark {
         settings = ClusterSingletonProxySettings(system)
       )
     )
+
+    val cluster = Cluster(system)
+    ClusterHttpManagement(cluster).start()
 
     val node = system.actorOf(BenchmarkNode.props(coordinatorSingletonProxy), "benchmark-node")
 
