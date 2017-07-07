@@ -212,8 +212,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       log.info("Benchmark done!")
       goto(Done)
     } else {
-      System.setProperty("benchmark.step", nextStep.toString)
-      sendMessageToAll(members, Reconfigure(plan(nextStep).implementationClass, plan(nextStep).threshold))
+      sendMessageToAll(members, Reconfigure(plan(nextStep).implementationClass, plan(nextStep).threshold, nextStep))
       goto(WaitingForMembers)
     }
 

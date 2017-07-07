@@ -33,12 +33,13 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
     case BecomeUnreachable =>
       log.info("Becoming unreachable by shutting down actor system")
       shutdown()
-    case Reconfigure(implementationClass, threshold) =>
+    case Reconfigure(implementationClass, threshold, step) =>
       log.info(s"Reconfiguring node to use $implementationClass with threshold $threshold")
       sender() ! ReconfigurationAck
       shutdown(Map(
         "akka.cluster.failure-detector.threshold" -> threshold.toString,
-        "akka.cluster.failure-detector.implementation-class" -> implementationClass
+        "akka.cluster.failure-detector.implementation-class" -> implementationClass,
+        "benchmark.step" -> step.toString
       ))
     case ExpectUnreachable(member) =>
       start = Some(System.nanoTime())
@@ -76,6 +77,6 @@ object BenchmarkNode {
 
   case object AwaitShutdown
 
-  case class Reconfigure(implementationClass: String, threshold: Double)
+  case class Reconfigure(implementationClass: String, threshold: Double, step: Int)
 
 }
