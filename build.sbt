@@ -25,6 +25,7 @@ libraryDependencies ++= Seq(
   "org.hdrhistogram"   % "HdrHistogram" % "2.1.9",
   "com.typesafe.play" %% "play-ahc-ws-standalone" % "1.0.0",
   "com.papertrailapp"  % "logback-syslog4j" % "1.0.0",
+  "org.codehaus.janino" % "janino" % "3.0.6",
 
   "com.typesafe.akka" %% "akka-testkit" % akkaVer,
   "org.scalatest"     %% "scalatest" % "3.0.1" % "test"
