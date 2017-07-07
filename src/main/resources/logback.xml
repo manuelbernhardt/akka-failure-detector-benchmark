@@ -1,5 +1,31 @@
 <configuration>
 
+    <if condition='isDefined("PAPERTRAIL_HOST")'>
+        <then>
+
+            <appender name="SYSLOG-TLS" class="com.papertrailapp.logback.Syslog4jAppender">
+                <layout class="ch.qos.logback.classic.PatternLayout">
+                    <pattern>%d{MMM dd HH:mm:ss} HOSTNAME APPNAME: %-5level %logger{35}: %m%n%xEx</pattern>
+                </layout>
+
+                <syslogConfig
+                        class="org.productivity.java.syslog4j.impl.net.tcp.ssl.SSLTCPNetSyslogConfig">
+                    <!-- remote system to log to -->
+                    <host>${PAPERTRAIL_HOST}</host>
+                    <!-- remote port to log to -->
+                    <port>${PAPERTRAIL_PORT}</port>
+                    <!-- max log message length in bytes -->
+                    <maxMessageLength>128000</maxMessageLength>
+
+                    <sendLocalTimestamp>false</sendLocalTimestamp>
+                    <sendLocalName>false</sendLocalName>
+
+                </syslogConfig>
+            </appender>
+
+        </then>
+    </if>
+
     <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
         <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
             <level>debug</level>
@@ -32,6 +58,12 @@
     <root level="debug">
         <appender-ref ref="console"/>
         <appender-ref ref="file"/>
+        <if condition='isDefined("PAPERTRAIL_HOST")'>
+            <then>
+                <appender-ref ref="SYSLOG-TLS"/>
+            </then>
+        </if>
+
     </root>
 
 </configuration>

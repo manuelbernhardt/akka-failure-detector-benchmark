@@ -24,6 +24,7 @@ libraryDependencies ++= Seq(
   "com.tecsisa"       %% "constructr-coordination-consul" % "0.7.0",
   "org.hdrhistogram"   % "HdrHistogram" % "2.1.9",
   "com.typesafe.play" %% "play-ahc-ws-standalone" % "1.0.0",
+  "com.papertrailapp"  % "logback-syslog4j" % "1.0.0",
 
   "com.typesafe.akka" %% "akka-testkit" % akkaVer,
   "org.scalatest"     %% "scalatest" % "3.0.1" % "test"
