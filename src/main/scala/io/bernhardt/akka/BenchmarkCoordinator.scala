@@ -42,6 +42,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
   override def preStart() = {
     super.preStart()
     cluster.subscribe(self, ClusterEvent.InitialStateAsEvents, classOf[MemberUp], classOf[MemberRemoved], classOf[UnreachableMember], classOf[ReachableMember])
+    log.info("Benchmark coordinator started")
   }
 
   override def postStop() = {
@@ -68,6 +69,9 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     case Event(MemberRemoved(member, _), data: BenchmarkData) =>
       log.warning(s"Member ${member.address} removed")
       stay() using data.copy(members = data.members - member)
+    case Event(UnreachableMember(member), data: BenchmarkData) =>
+      log.error(s"************* Member ${member.address} unreachable, this wasn't planned")
+      goto(Done)
     case Event(ExpectUnreachableAck(address), data: BenchmarkData) =>
       val acked = data.ackedExpectUnreachable + address
       log.debug("{}/{} members acked benchmark start", acked.size, expectedMembers)
