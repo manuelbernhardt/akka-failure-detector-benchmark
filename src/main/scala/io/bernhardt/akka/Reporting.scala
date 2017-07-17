@@ -1,16 +1,14 @@
 package io.bernhardt.akka
 
 import akka.actor.ActorSystem
-import akka.http.scaladsl.model.DateTime
 import akka.stream.ActorMaterializer
 import play.api.libs.ws.WSAuthScheme
 import play.api.libs.ws.ahc.StandaloneAhcWSClient
 
 object Reporting {
 
-  def email(content: String, system: ActorSystem) = {
+  def email(subject: String, content: String, system: ActorSystem) = {
     val ws = StandaloneAhcWSClient()(ActorMaterializer()(system))
-    val hostname = system.settings.config.getString("akka.remote.netty.tcp.hostname")
 
     for {
       mailgunDomain <- Option(system.settings.config.getString("reporting.mailgun.domain"))
@@ -22,7 +20,7 @@ object Reporting {
         .post(Map(
           "from" -> s"postmaster@$mailgunDomain",
           "to" -> to,
-          "subject" -> s"Akka FD Benchmark results $hostname ${DateTime.now.toString()}",
+          "subject" -> subject,
           "text" -> content
         ))
     }

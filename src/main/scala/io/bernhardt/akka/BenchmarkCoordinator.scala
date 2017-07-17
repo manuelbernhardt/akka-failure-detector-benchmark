@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit
 import akka.actor.{Actor, ActorLogging, Address, FSM, Props}
 import akka.cluster.ClusterEvent._
 import akka.cluster.{Cluster, ClusterEvent, Member, UniqueAddress}
+import akka.http.scaladsl.model.DateTime
 import akka.pattern.{AskTimeoutException, ask, pipe}
 import akka.util.Timeout
 import io.bernhardt.akka.BenchmarkCoordinator._
@@ -25,6 +26,10 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
   val expectedMembers = context.system.settings.config.getInt("benchmark.expected-members")
 
   val warmupTime = Duration.create(context.system.settings.config.getDuration("benchmark.warmup-time").getSeconds, TimeUnit.SECONDS)
+
+  val preparationTimeout = Duration.create(context.system.settings.config.getDuration("benchmark.preparation-timeout").getSeconds, TimeUnit.SECONDS)
+
+  val benchmarkTimeout = Duration.create(context.system.settings.config.getDuration("benchmark.benchmark-timeout").getSeconds, TimeUnit.SECONDS)
 
   val rounds = context.system.settings.config.getInt("benchmark.rounds")
 
@@ -62,7 +67,11 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       stay() using data.copy(members = data.members - member)
   }
 
-  when(PreparingBenchmark) {
+  when(PreparingBenchmark, preparationTimeout) {
+    case Event(StateTimeout, _) =>
+      log.error("Benchmark preparation timeout")
+      Reporting.email("Akka FD benchmark error - preparation timeout", s"Timed out after $preparationTimeout", context.system)
+      goto(Done)
     case Event(MemberUp(member), data: BenchmarkData) =>
       val members = data.members + member
       stay() using data.copy(members = members)
@@ -87,7 +96,11 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       stay() using data
   }
 
-  when(Benchmarking) {
+  when(Benchmarking, benchmarkTimeout) {
+    case Event(StateTimeout, _) =>
+      log.error("Benchmark timeout")
+      Reporting.email("Akka FD benchmark error - benchmark timeout", s"Timed out after $benchmarkTimeout", context.system)
+      goto(Done)
     case Event(MemberUnreachabilityDetected(member, duration), data: BenchmarkData) =>
       val durations = data.detectionDurations + (member -> duration)
       if (durations.size == expectedMembers - 1) {
@@ -203,7 +216,9 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
          |*********
         """.stripMargin
     log.info(report)
-    Reporting.email(report, context.system)
+    val hostname = context.system.settings.config.getString("akka.remote.netty.tcp.hostname")
+    val subject = s"Akka FD Benchmark results $hostname ${DateTime.now.toString()}"
+    Reporting.email(subject, report, context.system)
   }
 
   private def configureStep(members: Set[Member]) = {
