@@ -80,7 +80,10 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       stay() using data.copy(members = data.members - member)
     case Event(UnreachableMember(member), data: BenchmarkData) =>
       log.error(s"************* Member ${member.address} unreachable, this wasn't planned")
-      goto(Done)
+      stay()
+    case Event(ReachableMember(member), data: BenchmarkData) =>
+      log.info(s"************* Member ${member.address} reachable again")
+      stay()
     case Event(ExpectUnreachableAck(address), data: BenchmarkData) =>
       val acked = data.ackedExpectUnreachable + address
       log.debug("{}/{} members acked benchmark start", acked.size, expectedMembers)
