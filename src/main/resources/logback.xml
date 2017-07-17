@@ -42,7 +42,7 @@
         </encoder>
     </appender>
 
-    <logger name="akka" level="debug" />
+    <logger name="akka" level="info" />
     <logger name="de.heikoseeberger" level="info" />
     <logger name="com.tecsisa.constructr" level="info" />
     <logger name="play.shaded.ahc" level="off" />
