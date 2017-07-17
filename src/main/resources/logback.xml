@@ -42,18 +42,11 @@
         </encoder>
     </appender>
 
-    <logger name="akka" level="debug" additivity="false" />
-
-    <logger name="de.heikoseeberger" level="info" additivity="false" />
-    <logger name="com.tecsisa.constructr" level="info" additivity="false" />
-
-    <logger name="play.shaded.ahc" level="off" additivity="false" />
-
-
-    <logger name="io.bernhardt.akka" level="debug" additivity="false">
-        <appender-ref ref="console"/>
-        <appender-ref ref="file"/>
-    </logger>
+    <logger name="akka" level="debug" />
+    <logger name="de.heikoseeberger" level="info" />
+    <logger name="com.tecsisa.constructr" level="info" />
+    <logger name="play.shaded.ahc" level="off" />
+    <logger name="io.bernhardt.akka" level="debug" />
 
     <root level="debug">
         <appender-ref ref="console"/>
@@ -63,7 +56,6 @@
                 <appender-ref ref="SYSLOG-TLS"/>
             </then>
         </if>
-
     </root>
 
 </configuration>
