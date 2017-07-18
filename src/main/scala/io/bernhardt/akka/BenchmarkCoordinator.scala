@@ -86,7 +86,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       stay()
     case Event(MemberRemoved(member, _), data: BenchmarkData) =>
       log.warning(s"Member ${member.address} removed")
-      goto(WaitingForMembers) using data.copy(members = data.members - member)
+      goto(WaitingForMembers) using WaitingData(members = data.members - member, round = data.round, warmedUp = true)
   }
 
   when(Benchmarking) {
@@ -107,7 +107,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       stay()
     case Event(MemberRemoved(member, _), data: BenchmarkData) =>
       log.warning(s"Member ${member.address} removed during run")
-      goto(WaitingForMembers) using data.copy(members = data.members - member)
+      goto(WaitingForMembers) using WaitingData(members = data.members - member, round = data.round, warmedUp = true)
   }
 
   when(Done) {
@@ -182,10 +182,10 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
   }
 
   private def removeFalsePositive(member: Member, data: BenchmarkData) = {
-      log.error(s"************* Member ${member.address} unreachable, probably a false positive from the FD. Getting rid of it")
-      shutdownMember(member.address)
-      cluster.down(member.address)
-      goto(WaitingForMembers) using data.copy(members = data.members - member)
+    log.error(s"************* Member ${member.address} unreachable, probably a false positive from the FD. Getting rid of it")
+    shutdownMember(member.address)
+    cluster.down(member.address)
+    goto(WaitingForMembers) using WaitingData(members = data.members - member, round = data.round, warmedUp = true)
   }
 
   private def reportRoundResults(): Unit = {
