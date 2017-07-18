@@ -1,6 +1,6 @@
 package io.bernhardt.akka
 
-import java.io.{ByteArrayOutputStream, PrintStream}
+import java.io.{ByteArrayOutputStream, File, PrintStream}
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 
@@ -10,11 +10,13 @@ import akka.cluster.{Cluster, ClusterEvent, Member, UniqueAddress}
 import akka.http.scaladsl.model.DateTime
 import akka.pattern.{AskTimeoutException, ask, pipe}
 import akka.util.Timeout
+import com.github.tototoshi.csv.{CSVReader, CSVWriter}
 import io.bernhardt.akka.BenchmarkCoordinator._
 import io.bernhardt.akka.BenchmarkNode.{BecomeUnreachable, ExpectUnreachable, Reconfigure}
 import org.HdrHistogram.Histogram
 
 import scala.concurrent.duration._
+import scala.io.Source
 import scala.util.Random
 
 class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging {
@@ -39,6 +41,15 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
   val step = Option(context.system.settings.config.getInt("benchmark.step")).getOrElse(0)
 
   val detectionTiming = new Histogram(10.seconds.toMicros, 3)
+
+  val detectionTimingCsvFile = {
+    val d = System.getProperty("java.io.tmpdir")
+    val f = new File(d, "fd-benchmark.csv")
+    if (!f.exists()) {
+        f.createNewFile()
+    }
+    f
+  }
 
   override def preStart() = {
     super.preStart()
@@ -120,6 +131,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     log.info("Transitioning from {} to {}", from, to)
   }
 
+
   private def startIfReady(data: WaitingData, warmedUp: Boolean) = {
     if (data.members.size == expectedMembers && warmedUp) {
       log.info(s"${data.members.size}/$expectedMembers members joined, preparing benchmark")
@@ -145,9 +157,16 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
   private def onRoundFinished(data: BenchmarkData) = {
     log.info("Round {} done".stripMargin, data.round)
+
+    val executionPlan = plan(step)
+    val csv = CSVWriter.open(detectionTimingCsvFile, append = true)
+
     data.detectionDurations.values.foreach { durationNanos =>
       detectionTiming.recordValue(durationNanos.nanos.toMicros)
+      csv.writeRow(List(executionPlan.implementationClass, executionPlan.threshold, durationNanos.nanos.toMicros))
     }
+
+    csv.close()
 
     if (data.round == rounds) {
       reportRoundResults()
@@ -223,6 +242,8 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     val nextStep = step + 1
     if (nextStep == plan.size) {
       log.info("Benchmark done!")
+      val report = Source.fromFile(detectionTimingCsvFile).getLines().mkString("\n")
+      Reporting.email(s"FD Benchmark report ${DateTime.now.toString()}", report, context.system)
       goto(Done)
     } else {
       sendMessageToAll(members, Reconfigure(plan(nextStep).implementationClass, plan(nextStep).threshold, nextStep))
