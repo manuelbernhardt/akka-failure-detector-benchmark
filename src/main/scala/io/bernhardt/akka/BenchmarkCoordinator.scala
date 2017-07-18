@@ -62,7 +62,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       removeFalsePositive(member, data)
     case Event(MemberRemoved(member, _), data: WaitingData) =>
       log.warning(s"Member ${member.address} removed")
-      stay() using data.copy(members = data.members - member)
+      stay using data.copy(members = data.members - member)
   }
 
   when(PreparingBenchmark) {
@@ -73,17 +73,17 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
         shutdownMember(data.target.address)
         goto(Benchmarking) using data.copy(ackedExpectUnreachable = acked)
       } else {
-        stay() using data.copy(ackedExpectUnreachable = acked)
+        stay using data.copy(ackedExpectUnreachable = acked)
       }
     case Event(MessageDeliveryTimeout(address, message), data) =>
       log.info("Redelivering message {} to {}", message, address)
       sendMessage(address, message)
-      stay() using data
+      stay using data
     case Event(UnreachableMember(member), data: BenchmarkData) =>
       removeFalsePositive(member, data)
     case Event(MemberUp(member), data: BenchmarkData) =>
       log.warning(s"Member ${member.address} added during preparation")
-      stay()
+      stay
     case Event(MemberRemoved(member, _), data: BenchmarkData) =>
       log.warning(s"Member ${member.address} removed")
       goto(WaitingForMembers) using WaitingData(members = data.members - member, round = data.round, warmedUp = true)
@@ -95,16 +95,16 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       if (durations.size == expectedMembers - 1) {
         onRoundFinished(data)
       } else {
-        stay() using data.copy(detectionDurations = durations)
+        stay using data.copy(detectionDurations = durations)
       }
     case Event(UnreachableMember(member), data: BenchmarkData) if member.uniqueAddress == data.target =>
       cluster.down(member.address)
-      stay() using data.copy(members = data.members - member)
+      stay using data.copy(members = data.members - member)
     case Event(UnreachableMember(member), data: BenchmarkData) =>
       removeFalsePositive(member, data)
     case Event(MemberUp(member), data: BenchmarkData) =>
       log.warning(s"Member ${member.address} added during run")
-      stay()
+      stay
     case Event(MemberRemoved(member, _), data: BenchmarkData) =>
       log.warning(s"Member ${member.address} removed during run")
       goto(WaitingForMembers) using WaitingData(members = data.members - member, round = data.round, warmedUp = true)
@@ -113,7 +113,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
   when(Done) {
     case Event(any, _) =>
       log.info(any.toString)
-      stay()
+      stay
   }
 
   onTransition { case from -> to =>
@@ -126,7 +126,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       startRound(data.members, data.round)
     } else {
       log.info(s"Not starting yet as we only have ${data.members.size}/$expectedMembers members and warmup is $warmedUp")
-      stay() using data.copy(warmedUp = warmedUp)
+      stay using data.copy(warmedUp = warmedUp)
     }
   }
 
