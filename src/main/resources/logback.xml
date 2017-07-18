@@ -42,7 +42,8 @@
         </encoder>
     </appender>
 
-    <logger name="akka" level="info" />
+    <logger name="akka" level="warn" />
+    <logger name="com.typesafe.sslconfig" level="info" />
     <logger name="de.heikoseeberger" level="info" />
     <logger name="com.tecsisa.constructr" level="info" />
     <logger name="play.shaded.ahc" level="off" />
