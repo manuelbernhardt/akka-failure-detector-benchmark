@@ -27,10 +27,6 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
   val warmupTime = Duration.create(context.system.settings.config.getDuration("benchmark.warmup-time").getSeconds, TimeUnit.SECONDS)
 
-  val preparationTimeout = Duration.create(context.system.settings.config.getDuration("benchmark.preparation-timeout").getSeconds, TimeUnit.SECONDS)
-
-  val benchmarkTimeout = Duration.create(context.system.settings.config.getDuration("benchmark.benchmark-timeout").getSeconds, TimeUnit.SECONDS)
-
   val rounds = context.system.settings.config.getInt("benchmark.rounds")
 
   val plan: List[RoundConfiguration] = {
@@ -62,28 +58,14 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       startIfReady(data, warmedUp = true)
     case Event(MemberUp(member), data: WaitingData) =>
       startIfReady(data.copy(members = data.members + member), warmedUp = data.warmedUp)
+    case Event(UnreachableMember(member), data: BenchmarkData) =>
+      removeFalsePositive(member, data)
     case Event(MemberRemoved(member, _), data: WaitingData) =>
       log.warning(s"Member ${member.address} removed")
       stay() using data.copy(members = data.members - member)
   }
 
-  when(PreparingBenchmark, preparationTimeout) {
-    case Event(StateTimeout, _) =>
-      log.error("Benchmark preparation timeout")
-      Reporting.email("Akka FD benchmark error - preparation timeout", s"Timed out after $preparationTimeout", context.system)
-      goto(Done)
-    case Event(MemberUp(member), data: BenchmarkData) =>
-      val members = data.members + member
-      stay() using data.copy(members = members)
-    case Event(MemberRemoved(member, _), data: BenchmarkData) =>
-      log.warning(s"Member ${member.address} removed")
-      stay() using data.copy(members = data.members - member)
-    case Event(UnreachableMember(member), data: BenchmarkData) =>
-      log.error(s"************* Member ${member.address} unreachable, this wasn't planned")
-      stay()
-    case Event(ReachableMember(member), data: BenchmarkData) =>
-      log.info(s"************* Member ${member.address} reachable again")
-      stay()
+  when(PreparingBenchmark) {
     case Event(ExpectUnreachableAck(address), data: BenchmarkData) =>
       val acked = data.ackedExpectUnreachable + address
       log.debug("{}/{} members acked benchmark start", acked.size, expectedMembers)
@@ -97,29 +79,35 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       log.info("Redelivering message {} to {}", message, address)
       sendMessage(address, message)
       stay() using data
+    case Event(UnreachableMember(member), data: BenchmarkData) =>
+      removeFalsePositive(member, data)
+    case Event(MemberUp(member), data: BenchmarkData) =>
+      log.warning(s"Member ${member.address} added during preparation")
+      stay()
+    case Event(MemberRemoved(member, _), data: BenchmarkData) =>
+      log.warning(s"Member ${member.address} removed")
+      goto(WaitingForMembers) using data.copy(members = data.members - member)
   }
 
-  when(Benchmarking, benchmarkTimeout) {
-    case Event(StateTimeout, _) =>
-      log.error("Benchmark timeout")
-      Reporting.email("Akka FD benchmark error - benchmark timeout", s"Timed out after $benchmarkTimeout", context.system)
-      goto(Done)
+  when(Benchmarking) {
     case Event(MemberUnreachabilityDetected(member, duration), data: BenchmarkData) =>
       val durations = data.detectionDurations + (member -> duration)
       if (durations.size == expectedMembers - 1) {
-        self ! RoundFinished
+        onRoundFinished(data)
+      } else {
+        stay() using data.copy(detectionDurations = durations)
       }
-      stay() using data.copy(detectionDurations = durations)
-    case Event(RoundFinished, data: BenchmarkData) =>
-      onRoundFinished(data)
-    case Event(MemberUp(member), data: BenchmarkData) =>
-      stay() using data.copy(members = data.members + member)
     case Event(UnreachableMember(member), data: BenchmarkData) if member.uniqueAddress == data.target =>
       cluster.down(member.address)
       stay() using data.copy(members = data.members - member)
+    case Event(UnreachableMember(member), data: BenchmarkData) =>
+      removeFalsePositive(member, data)
+    case Event(MemberUp(member), data: BenchmarkData) =>
+      log.warning(s"Member ${member.address} added during run")
+      stay()
     case Event(MemberRemoved(member, _), data: BenchmarkData) =>
-      log.warning(s"Member ${member.address} removed")
-      stay() using data.copy(members = data.members - member)
+      log.warning(s"Member ${member.address} removed during run")
+      goto(WaitingForMembers) using data.copy(members = data.members - member)
   }
 
   when(Done) {
@@ -193,6 +181,13 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     context.actorSelection(BenchmarkNode.path(address)) ! BecomeUnreachable
   }
 
+  private def removeFalsePositive(member: Member, data: BenchmarkData) = {
+      log.error(s"************* Member ${member.address} unreachable, probably a false positive from the FD. Getting rid of it")
+      shutdownMember(member.address)
+      cluster.down(member.address)
+      goto(WaitingForMembers) using data.copy(members = data.members - member)
+  }
+
   private def reportRoundResults(): Unit = {
     val out = new ByteArrayOutputStream()
     detectionTiming.outputPercentileDistribution({
@@ -262,7 +257,6 @@ object BenchmarkCoordinator {
   case class RoundConfiguration(implementationClass: String, threshold: Double)
 
   // events
-  case object RoundFinished
 
   case class MemberUnreachabilityDetected(detectedBy: UniqueAddress, duration: Long)
 
