@@ -36,7 +36,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     }
   }.toList
 
-  val step = Option(System.getProperty("benchmark.step")).getOrElse("0").toInt
+  val step = Option(context.system.settings.config.getInt("benchmark.step")).getOrElse(0)
 
   val detectionTiming = new Histogram(10.seconds.toMicros, 3)
 
