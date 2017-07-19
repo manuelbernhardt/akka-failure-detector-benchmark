@@ -9,8 +9,9 @@ import akka.util.Timeout
 import com.typesafe.config.ConfigFactory
 import io.bernhardt.akka.BenchmarkNode.AwaitShutdown
 
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Await
 import scala.concurrent.duration._
+import scala.util.control.NonFatal
 
 object FailureDetectorBenchmark {
 
@@ -55,14 +56,22 @@ object FailureDetectorBenchmark {
     import scala.concurrent.ExecutionContext.Implicits.global
     implicit val timeout = Timeout(1.hour)
 
+    // wait until the system is asked to shutdown, retrieve new properties and start anew
     val f = (node ? AwaitShutdown).mapTo[Shutdown]
-    val termination = for {
+    val termination = (for {
       shutdown <- f
       _ <- system.terminate()
-    } yield shutdown.properties
+      _ <- system.whenTerminated
+    } yield shutdown.properties).recover { case NonFatal(_) => properties }
+
+    // if the system terminates unexpectedly we still want to restart using the previous properties
+    system.whenTerminated.foreach { _ =>
+      if (!f.isCompleted) {
+        startSystem(properties)
+      }
+    }
 
     val props = Await.result(termination, Duration.Inf)
-    Await.result(system.whenTerminated, Duration.Inf)
     startSystem(props)
   }
 }
