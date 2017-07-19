@@ -102,7 +102,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
   when(Benchmarking) {
     case Event(MemberUnreachabilityDetected(member, duration), data: BenchmarkData) =>
-      val durations = data.detectionDurations + (member -> duration)
+      val durations = data.detectionDurations :+ duration
       if (durations.size == expectedMembers - 1) {
         onRoundFinished(data)
       } else {
@@ -161,7 +161,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     val executionPlan = plan(step)
     val csv = CSVWriter.open(detectionTimingCsvFile, append = true)
 
-    data.detectionDurations.values.foreach { durationNanos =>
+    data.detectionDurations.foreach { durationNanos =>
       detectionTiming.recordValue(durationNanos.nanos.toMicros)
       csv.writeRow(List(executionPlan.implementationClass, executionPlan.threshold, durationNanos.nanos.toMicros))
     }
@@ -273,7 +273,7 @@ object BenchmarkCoordinator {
 
   case class WaitingData(members: Set[Member], round: Int, warmedUp: Boolean) extends Data
 
-  case class BenchmarkData(round: Int, target: UniqueAddress, detectionDurations: Map[UniqueAddress, Long] = Map.empty, members: Set[Member], start: Long = System.nanoTime(), ackedExpectUnreachable: Set[UniqueAddress] = Set.empty) extends Data
+  case class BenchmarkData(round: Int, target: UniqueAddress, detectionDurations: List[Long] = List.empty, members: Set[Member], start: Long = System.nanoTime(), ackedExpectUnreachable: Set[UniqueAddress] = Set.empty) extends Data
 
   case class RoundConfiguration(implementationClass: String, threshold: Double)
 
