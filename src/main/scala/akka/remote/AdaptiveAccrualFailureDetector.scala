@@ -8,7 +8,7 @@ import com.typesafe.config.Config
 import akka.event.EventStream
 
 /**
- * Implementation of 'A New Adaptive Accrual Failure Detector for Dependable Distributed Systems' by Satzget al. as defined in their paper:
+ * Implementation of 'A New Adaptive Accrual Failure Detector for Dependable Distributed Systems' by Satzger al. as defined in their paper:
  * [https://pdfs.semanticscholar.org/8805/d522cd6cef723aae55595f918e09914e4316.pdf]
  *
  * The idea of this failure detector is to predict the arrival time of the next heartbeat based on
@@ -36,7 +36,7 @@ import akka.event.EventStream
  * @param clock The clock, returning current time in milliseconds, but can be faked for testing
  *   purposes. It is only used for measuring intervals (duration).
  */
-class NewAdaptiveAccrualFailureDetector(
+class AdaptiveAccrualFailureDetector(
   val threshold:                Double,
   val maxSampleSize:            Int,
   val scalingFactor:            Double,
