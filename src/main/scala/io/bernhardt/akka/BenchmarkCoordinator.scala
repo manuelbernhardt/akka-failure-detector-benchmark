@@ -4,13 +4,13 @@ import java.io.{ByteArrayOutputStream, File, PrintStream}
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 
-import akka.actor.{Actor, ActorLogging, Address, FSM, Props}
+import akka.actor.{Actor, ActorLogging, FSM, Props}
 import akka.cluster.ClusterEvent._
 import akka.cluster.{Cluster, ClusterEvent, Member, UniqueAddress}
 import akka.http.scaladsl.model.DateTime
 import akka.pattern.{AskTimeoutException, ask, pipe}
 import akka.util.Timeout
-import com.github.tototoshi.csv.{CSVReader, CSVWriter}
+import com.github.tototoshi.csv.CSVWriter
 import io.bernhardt.akka.BenchmarkCoordinator._
 import io.bernhardt.akka.BenchmarkNode.{BecomeUnreachable, ExpectUnreachable, Reconfigure}
 import org.HdrHistogram.Histogram
@@ -19,6 +19,9 @@ import scala.concurrent.duration._
 import scala.io.Source
 import scala.util.Random
 
+/**
+  * TODO protobuf messages
+  */
 class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging {
 
   import context.dispatcher
@@ -81,7 +84,10 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       val acked = data.ackedExpectUnreachable + address
       log.debug("{}/{} members acked benchmark start", acked.size, expectedMembers)
       if (acked.size == expectedMembers) {
-        shutdownMember(data.target.address)
+        // we want the members only to start their timer now so instead of sending the shutdown instruction only to one member we send it to all
+        data.members.foreach { m =>
+          context.actorSelection(BenchmarkNode.path(m.address)) ! BecomeUnreachable(data.target)
+        }
         goto(Benchmarking) using data.copy(ackedExpectUnreachable = acked)
       } else {
         stay using data.copy(ackedExpectUnreachable = acked)
@@ -196,13 +202,13 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     } pipeTo self
   }
 
-  private def shutdownMember(address: Address): Unit = {
-    context.actorSelection(BenchmarkNode.path(address)) ! BecomeUnreachable
+  private def shutdownMember(uniqueAddress: UniqueAddress): Unit = {
+    context.actorSelection(BenchmarkNode.path(uniqueAddress.address)) ! BecomeUnreachable(uniqueAddress)
   }
 
   private def removeFalsePositive(member: Member, data: BenchmarkData) = {
     log.error(s"************* Member ${member.address} unreachable, probably a false positive from the FD. Getting rid of it")
-    shutdownMember(member.address)
+    shutdownMember(member.uniqueAddress)
     cluster.down(member.address)
     goto(WaitingForMembers) using WaitingData(members = data.members - member, round = data.round, warmedUp = true)
   }
@@ -277,7 +283,7 @@ object BenchmarkCoordinator {
 
   case class RoundConfiguration(implementationClass: String, threshold: Double)
 
-  // events
+  // inbound messages
 
   case class MemberUnreachabilityDetected(detectedBy: UniqueAddress, duration: Long)
 

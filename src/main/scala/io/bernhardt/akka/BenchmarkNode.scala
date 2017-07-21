@@ -2,7 +2,7 @@ package io.bernhardt.akka
 
 import akka.actor.{Actor, ActorLogging, ActorRef, Address, Props, RootActorPath}
 import akka.cluster.ClusterEvent.UnreachableMember
-import akka.cluster.{Cluster, ClusterEvent, Member}
+import akka.cluster.{Cluster, ClusterEvent, Member, UniqueAddress}
 import io.bernhardt.akka.BenchmarkCoordinator.{ExpectUnreachableAck, MemberUnreachabilityDetected, ReconfigurationAck}
 import io.bernhardt.akka.BenchmarkNode.{AwaitShutdown, BecomeUnreachable, ExpectUnreachable, Reconfigure}
 
@@ -30,9 +30,11 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
   def receive = {
     case AwaitShutdown =>
       systemManager = Some(sender())
-    case BecomeUnreachable =>
+    case BecomeUnreachable(uniqueAddress) if uniqueAddress == cluster.selfUniqueAddress =>
       log.info("Becoming unreachable by shutting down actor system")
       shutdown()
+    case BecomeUnreachable(_) =>
+      start = Some(System.nanoTime())
     case Reconfigure(implementationClass, threshold, step) =>
       log.info(s"Reconfiguring node to use $implementationClass with threshold $threshold")
       sender() ! ReconfigurationAck
@@ -42,8 +44,9 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
         "benchmark.step" -> step.toString
       ))
     case ExpectUnreachable(member) =>
-      start = Some(System.nanoTime())
+      // set the unreachable member the first time and start counting in case we don't get the second message in time
       expectedUnreachable = Some(member)
+      start = Some(System.nanoTime())
       sender() ! ExpectUnreachableAck(cluster.selfUniqueAddress)
       log.info("Expecting {} to become unreachable", member.address)
     case UnreachableMember(member) if Some(member) == expectedUnreachable =>
@@ -71,7 +74,7 @@ object BenchmarkNode {
 
   def path(address: Address) = RootActorPath(address) / "user" / name
 
-  case object BecomeUnreachable
+  case class BecomeUnreachable(address: UniqueAddress)
 
   case class ExpectUnreachable(member: Member)
 
