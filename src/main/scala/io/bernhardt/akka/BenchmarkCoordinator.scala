@@ -139,7 +139,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
 
   private def startIfReady(data: WaitingData, warmedUp: Boolean) = {
-    if (data.members.size == expectedMembers && warmedUp) {
+    if (data.members.size >= expectedMembers && warmedUp) {
       log.info(s"${data.members.size}/$expectedMembers members joined, preparing benchmark")
       startRound(data.members, data.round)
     } else {
