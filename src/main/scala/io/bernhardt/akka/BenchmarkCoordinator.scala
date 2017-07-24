@@ -100,7 +100,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       removeFalsePositive(member, data)
     case Event(MemberUp(member), data: BenchmarkData) =>
       log.warning(s"Member ${member.address} added during preparation")
-      stay
+      stay using data.copy(members = data.members + member)
     case Event(MemberRemoved(member, _), data: BenchmarkData) =>
       log.warning(s"Member ${member.address} removed")
       goto(WaitingForMembers) using WaitingData(members = data.members - member, round = data.round, warmedUp = true)
@@ -148,7 +148,8 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     }
   }
 
-  private def startRound(members: Set[Member], round: Int) = {
+  private def startRound(availableMembers: Set[Member], round: Int) = {
+    val members = availableMembers.toList.sorted.take(expectedMembers).toSet
     val candidates = members.filterNot(_.uniqueAddress == cluster.selfUniqueAddress)
     val target = candidates.toList(Random.nextInt(candidates.size))
 
