@@ -74,9 +74,9 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
   when(WaitingForMembers, warmupTime) {
     case Event(StateTimeout, data: WaitingData) =>
-      startIfReady(data, warmedUp = true)
+      proceedIfReady(data, warmedUp = true)
     case Event(MemberUp(_), data: WaitingData) =>
-      startIfReady(data, warmedUp = data.warmedUp)
+      proceedIfReady(data, warmedUp = data.warmedUp)
     case Event(UnreachableMember(member), _) =>
       setTimer(member.uniqueAddress.toString, RemoveUnscheduledUnreachable(member), removeUnscheduledUnreachableTimeout)
       stay
@@ -151,7 +151,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     case Event(MemberUp(member), _) =>
       log.warning(s"Member ${member.address} added during run")
       stay
-    case Event(MemberRemoved(member, _), data: BenchmarkData) =>
+    case Event(MemberRemoved(member, _), data: BenchmarkData) if member.uniqueAddress != data.target.uniqueAddress =>
       log.warning(s"Member ${member.address} removed during run, aborting")
       goto(WaitingForMembers) using WaitingData(round = data.round, warmedUp = true)
   }
@@ -167,19 +167,29 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
   }
 
 
-  private def startIfReady(data: WaitingData, warmedUp: Boolean) = {
+  private def proceedIfReady(data: WaitingData, warmedUp: Boolean) = {
     val members = cluster.state.members
-    if (members.size >= expectedMembers && warmedUp) {
-      log.info(s"${members.size}/$expectedMembers required members joined, preparing benchmark")
-      val availableMembers = roundMembers
-      lastGoodMembers = availableMembers
-      prepareBenchmark(availableMembers, data.round)
-    } else {
-      log.info(s"Not starting yet as we only have ${members.size}/$expectedMembers members and warmup is $warmedUp")
-      if (expectedMembers - members.size < 4 && lastGoodMembers.nonEmpty) {
-        log.info("Missing members {}", lastGoodMembers.diff(members).map(_.uniqueAddress).mkString(" "))
+    if (data.configureStep.isDefined) {
+      val nextStep = data.configureStep.get
+      if (members.size >= expectedMembers) {
+        sendMessageToAll(members, Reconfigure(plan(nextStep).implementationClass, plan(nextStep).threshold, nextStep))
+        goto(Done)
+      } else {
+        stay
       }
-      stay using data.copy(warmedUp = warmedUp)
+    } else {
+      if (members.size >= expectedMembers && warmedUp) {
+        log.info(s"${members.size}/$expectedMembers required members joined, preparing benchmark")
+        val availableMembers = roundMembers
+        lastGoodMembers = availableMembers
+        prepareBenchmark(availableMembers, data.round)
+      } else {
+        log.info(s"Not starting yet as we only have ${members.size}/$expectedMembers members and warmup is $warmedUp")
+        if (expectedMembers - members.size < 4 && lastGoodMembers.nonEmpty) {
+          log.info("Missing members {}", lastGoodMembers.diff(members).map(_.uniqueAddress).mkString(" "))
+        }
+        stay using data.copy(warmedUp = warmedUp)
+      }
     }
   }
 
@@ -286,8 +296,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       Reporting.email(s"FD Benchmark report ${DateTime.now.toString()}", report, context.system)
       goto(Done)
     } else {
-      sendMessageToAll(members, Reconfigure(plan(nextStep).implementationClass, plan(nextStep).threshold, nextStep))
-      goto(Done)
+      goto(WaitingForMembers) using WaitingData(round = 0, warmedUp = false, configureStep = Some(nextStep))
     }
   }
 
@@ -314,7 +323,7 @@ object BenchmarkCoordinator {
     val round: Int
   }
 
-  case class WaitingData(round: Int, warmedUp: Boolean) extends Data
+  case class WaitingData(round: Int, warmedUp: Boolean, configureStep: Option[Int] = None) extends Data
 
   case class BenchmarkData(round: Int, target: Member, detectionDurations: List[Long] = List.empty, members: SortedSet[Member], start: Long = System.nanoTime(), ackedExpectUnreachable: Set[UniqueAddress] = Set.empty) extends Data
 
