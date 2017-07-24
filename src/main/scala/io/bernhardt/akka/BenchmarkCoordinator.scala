@@ -91,7 +91,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
   }
 
   when(PreparingBenchmark) {
-    case Event(StartBenchmark, data: BenchmarkData) =>
+    case Event(PrepareBenchmark, data: BenchmarkData) =>
       sendMessageToAll(data.members, ExpectUnreachable(data.target))
       stay
     case Event(ExpectUnreachableAck(address), data: BenchmarkData) =>
@@ -202,6 +202,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
          |*********************
          |Starting benchmarking round $round/$rounds (step ${step + 1}/${plan.size}) with ${members.size}/$expectedMembers member nodes, making ${target.address} unreachable
          |*********************""".stripMargin)
+    setTimer("preparBenchmark", PrepareBenchmark, 1.second)
     goto(PreparingBenchmark) using BenchmarkData(round = round, target = target, members = members)
   }
 
