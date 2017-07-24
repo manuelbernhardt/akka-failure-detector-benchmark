@@ -6,7 +6,7 @@ import java.util.concurrent.TimeUnit
 
 import akka.actor.{Actor, ActorLogging, FSM, Props}
 import akka.cluster.ClusterEvent._
-import akka.cluster.{Cluster, ClusterEvent, Member, UniqueAddress}
+import akka.cluster._
 import akka.http.scaladsl.model.DateTime
 import akka.pattern.{AskTimeoutException, ask, pipe}
 import akka.util.Timeout
@@ -168,7 +168,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
 
   private def proceedIfReady(data: WaitingData, warmedUp: Boolean) = {
-    val members = cluster.state.members
+    val members = availableClusterMembers
     if (data.configureStep.isDefined) {
       val nextStep = data.configureStep.get
       if (members.size >= expectedMembers) {
@@ -221,7 +221,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
     if (data.round == rounds) {
       reportRoundResults()
-      configureStep(cluster.state.members)
+      configureStep(availableClusterMembers)
     } else {
       if (data.members.size < expectedMembers) {
         log.info("Waiting for enough members to join")
@@ -301,7 +301,10 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     }
   }
 
-  private def roundMembers = cluster.state.members.take(expectedMembers)
+
+  private def availableClusterMembers: SortedSet[Member] = cluster.state.members.filter(s => s.status == MemberStatus.Up || s.status == MemberStatus.WeaklyUp)
+
+  private def roundMembers: SortedSet[Member] = availableClusterMembers.take(expectedMembers)
 
 }
 
