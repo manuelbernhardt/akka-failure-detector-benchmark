@@ -91,14 +91,14 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
   }
 
   when(PreparingBenchmark) {
+    case Event(StartBenchmark, data: BenchmarkData) =>
+      sendMessageToAll(data.members, ExpectUnreachable(data.target))
+      stay
     case Event(ExpectUnreachableAck(address), data: BenchmarkData) =>
       val acked = data.ackedExpectUnreachable + address
       log.debug("{}/{} members acked benchmark start", acked.size, expectedMembers)
       if (acked.size == expectedMembers) {
-        // we want the members only to start their timer now so instead of sending the shutdown instruction only to one member we send it to all
-        data.members.foreach { m =>
-          context.actorSelection(BenchmarkNode.path(m.address)) ! BecomeUnreachable(data.target)
-        }
+        setTimer("startBenchmark", StartBenchmark, 1.second)
         goto(Benchmarking) using data.copy(ackedExpectUnreachable = acked)
       } else {
         stay using data.copy(ackedExpectUnreachable = acked)
@@ -124,6 +124,12 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
   }
 
   when(Benchmarking) {
+    case Event(StartBenchmark, data: BenchmarkData) =>
+        // we want the members only to start their timer now so instead of sending the shutdown instruction only to one member we send it to all
+        data.members.foreach { m =>
+          context.actorSelection(BenchmarkNode.path(m.address)) ! BecomeUnreachable(data.target.uniqueAddress)
+        }
+      stay
     case Event(MemberUnreachabilityDetected(member, duration), data: BenchmarkData) =>
       val durations = data.detectionDurations :+ duration
       if (durations.size == expectedMembers - 1) {
@@ -131,7 +137,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       } else {
         stay using data.copy(detectionDurations = durations)
       }
-    case Event(UnreachableMember(member), data: BenchmarkData) if member.uniqueAddress == data.target =>
+    case Event(UnreachableMember(member), data: BenchmarkData) if member.uniqueAddress == data.target.uniqueAddress =>
       cluster.down(member.address)
       stay using data.copy(members = data.members - member)
     case Event(UnreachableMember(member), _) =>
@@ -167,7 +173,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       log.info(s"${members.size}/$expectedMembers required members joined, preparing benchmark")
       val availableMembers = roundMembers
       lastGoodMembers = availableMembers
-      startRound(availableMembers, data.round)
+      prepareBenchmark(availableMembers, data.round)
     } else {
       log.info(s"Not starting yet as we only have ${members.size}/$expectedMembers members and warmup is $warmedUp")
       if (expectedMembers - members.size < 4 && lastGoodMembers.nonEmpty) {
@@ -177,7 +183,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     }
   }
 
-  private def startRound(members: SortedSet[Member], round: Int) = {
+  private def prepareBenchmark(members: SortedSet[Member], round: Int) = {
     val candidates = members.filterNot(_.uniqueAddress == cluster.selfUniqueAddress)
     val target = candidates.toList(Random.nextInt(candidates.size))
 
@@ -186,8 +192,7 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
          |*********************
          |Starting benchmarking round $round/$rounds (step ${step + 1}/${plan.size}) with ${members.size}/$expectedMembers member nodes, making ${target.address} unreachable
          |*********************""".stripMargin)
-    sendMessageToAll(members, ExpectUnreachable(target))
-    goto(PreparingBenchmark) using BenchmarkData(round = round, target = target.uniqueAddress, members = members)
+    goto(PreparingBenchmark) using BenchmarkData(round = round, target = target, members = members)
   }
 
   private def onRoundFinished(data: BenchmarkData) = {
@@ -205,13 +210,13 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
 
     if (data.round == rounds) {
       reportRoundResults()
-      configureStep(data.members)
+      configureStep(cluster.state.members)
     } else {
       if (data.members.size < expectedMembers) {
         log.info("Waiting for enough members to join")
         goto(WaitingForMembers) using WaitingData(data.round + 1, warmedUp = true)
       } else {
-        startRound(data.members, data.round + 1)
+        prepareBenchmark(data.members, data.round + 1)
       }
     }
   }
@@ -311,11 +316,15 @@ object BenchmarkCoordinator {
 
   case class WaitingData(round: Int, warmedUp: Boolean) extends Data
 
-  case class BenchmarkData(round: Int, target: UniqueAddress, detectionDurations: List[Long] = List.empty, members: SortedSet[Member], start: Long = System.nanoTime(), ackedExpectUnreachable: Set[UniqueAddress] = Set.empty) extends Data
+  case class BenchmarkData(round: Int, target: Member, detectionDurations: List[Long] = List.empty, members: SortedSet[Member], start: Long = System.nanoTime(), ackedExpectUnreachable: Set[UniqueAddress] = Set.empty) extends Data
 
   case class RoundConfiguration(implementationClass: String, threshold: Double)
 
   // inbound messages
+
+  case object PrepareBenchmark
+
+  case object StartBenchmark
 
   case class RemoveUnscheduledUnreachable(member: Member)
 
