@@ -34,7 +34,8 @@ object FailureDetectorBenchmark {
     import scala.collection.JavaConverters._
     val systemName = Option(System.getenv("SYSTEM_NAME")).getOrElse("akka-fd-benchmark")
     val config = ConfigFactory.parseMap(properties.asJava).withFallback(ConfigFactory.load())
-    val system: ActorSystem = ActorSystem(systemName, config)
+    val step = Option(config.getInt("benchmark.step")).getOrElse("0")
+    val system: ActorSystem = ActorSystem(s"$systemName-$step", config)
     val coordinatorSingletonManager = system.actorOf(
       ClusterSingletonManager.props(
         singletonProps = BenchmarkCoordinator.props,
