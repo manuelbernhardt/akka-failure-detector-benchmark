@@ -293,14 +293,15 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
     val hostname = context.system.settings.config.getString("akka.remote.netty.tcp.hostname")
     val subject = s"Akka FD Benchmark results $hostname ${DateTime.now.toString()}"
     Reporting.email(subject, report, context.system)
-    Reporting.email(s"FD Benchmark report ${DateTime.now.toString()}", report, context.system)
+
+    val timingReport = Source.fromFile(detectionTimingCsvFile).getLines().mkString("\n")
+    Reporting.email(s"FD Benchmark report ${DateTime.now.toString()}", timingReport, context.system)
   }
 
   private def configureStep(members: Set[Member]) = {
     val nextStep = step + 1
     if (nextStep == plan.size) {
       log.info("Benchmark done!")
-      val report = Source.fromFile(detectionTimingCsvFile).getLines().mkString("\n")
       goto(Done)
     } else {
       goto(WaitingForMembers) using WaitingData(round = 0, warmedUp = false, configureStep = Some(nextStep))
