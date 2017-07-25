@@ -1,10 +1,12 @@
 package io.bernhardt.akka
 
-import akka.actor.{Actor, ActorLogging, ActorRef, Address, Props, RootActorPath}
-import akka.cluster.ClusterEvent.UnreachableMember
+import akka.actor.{Actor, ActorLogging, ActorRef, Address, Cancellable, Props, RootActorPath}
+import akka.cluster.ClusterEvent.{MemberEvent, UnreachableMember}
 import akka.cluster.{Cluster, ClusterEvent, Member, UniqueAddress}
 import io.bernhardt.akka.BenchmarkCoordinator.{ExpectUnreachableAck, MemberUnreachabilityDetected, ReconfigurationAck}
-import io.bernhardt.akka.BenchmarkNode.{AwaitShutdown, BecomeUnreachable, ExpectUnreachable, Reconfigure}
+import io.bernhardt.akka.BenchmarkNode._
+
+import scala.concurrent.duration._
 
 class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
 
@@ -15,6 +17,8 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
   var start: Option[Long] = None
 
   val cluster = Cluster(context.system)
+
+  var resolutionScheduler: Option[Cancellable] = None
 
   override def preStart() = {
     super.preStart()
@@ -57,6 +61,14 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
       expectedUnreachable = None
     case UnreachableMember(member) =>
       log.info("OTHER UNREACHABLE {}, {}", member, expectedUnreachable)
+      scheduleResolution()
+    case _: MemberEvent if cluster.state.unreachable.isEmpty =>
+      resolutionScheduler.foreach(_.cancel())
+      resolutionScheduler = None
+    case _: MemberEvent =>
+      scheduleResolution()
+    case SimpleMajorityResolution =>
+      simpleMajorityResolution()
   }
 
   def shutdown(properties: Map[String, String] = Map.empty): Unit = {
@@ -66,13 +78,38 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
       log.error("No reference to system manager")
     }
   }
+
+  def scheduleResolution() = {
+    resolutionScheduler.foreach(_.cancel)
+    context.system.scheduler.scheduleOnce(10.seconds, self, SimpleMajorityResolution)(context.dispatcher)
+  }
+
+  def simpleMajorityResolution() = {
+    resolutionScheduler = None
+    val unreachable = cluster.state.unreachable
+    val reachable = cluster.state.members.diff(unreachable)
+    if (reachable.size > unreachable.size) {
+      unreachable.map(_.address).foreach(cluster.down)
+    } else if (reachable.size < unreachable.size) {
+      log.info("We're in minority - downing and shutting down")
+      reachable.map(_.address).foreach(cluster.down)
+      systemManager.foreach(_ ! Shutdown)
+    } else {
+      log.warning("Can't perform SBR based on simple majority, both partitions are of equal size")
+    }
+  }
+
 }
 
 object BenchmarkNode {
+
   def props(coordinator: ActorRef) = Props(classOf[BenchmarkNode], coordinator)
+
   val name = "benchmark-node"
 
   def path(address: Address) = RootActorPath(address) / "user" / name
+
+  case object SimpleMajorityResolution
 
   case class BecomeUnreachable(address: UniqueAddress)
 

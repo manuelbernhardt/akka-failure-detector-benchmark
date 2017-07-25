@@ -59,6 +59,7 @@ object FailureDetectorBenchmark {
 
     // wait until the system is asked to shutdown, retrieve new properties and start anew
     val f = (node ? AwaitShutdown).mapTo[Shutdown]
+
     val termination = (for {
       shutdown <- f
       _ <- system.terminate()

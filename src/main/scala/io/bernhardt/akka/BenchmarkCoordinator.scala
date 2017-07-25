@@ -90,7 +90,10 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       stay
   }
 
-  when(PreparingBenchmark) {
+  when(PreparingBenchmark, 1.minute) {
+    case Event(StateTimeout, data: BenchmarkData) =>
+      log.error("Stuck in benchmark preparation, going back to WaitingForMembers")
+      goto(WaitingForMembers) using WaitingData(round = data.round, warmedUp = true)
     case Event(PrepareBenchmark, data: BenchmarkData) =>
       sendMessageToAll(data.members, ExpectUnreachable(data.target))
       stay
@@ -123,12 +126,15 @@ class BenchmarkCoordinator extends Actor with FSM[State, Data] with ActorLogging
       goto(WaitingForMembers) using WaitingData(round = data.round, warmedUp = true)
   }
 
-  when(Benchmarking) {
+  when(Benchmarking, 1.minute) {
+    case Event(StateTimeout, data: BenchmarkData) =>
+      log.error("Stuck in benchmark preparation, going back to WaitingForMembers")
+      goto(WaitingForMembers) using WaitingData(round = data.round, warmedUp = true)
     case Event(StartBenchmark, data: BenchmarkData) =>
-        // we want the members only to start their timer now so instead of sending the shutdown instruction only to one member we send it to all
-        data.members.foreach { m =>
-          context.actorSelection(BenchmarkNode.path(m.address)) ! BecomeUnreachable(data.target.uniqueAddress)
-        }
+      // we want the members only to start their timer now so instead of sending the shutdown instruction only to one member we send it to all
+      data.members.foreach { m =>
+        context.actorSelection(BenchmarkNode.path(m.address)) ! BecomeUnreachable(data.target.uniqueAddress)
+      }
       stay
     case Event(MemberUnreachabilityDetected(member, duration), data: BenchmarkData) =>
       val durations = data.detectionDurations :+ duration
