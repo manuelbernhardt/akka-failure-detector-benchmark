@@ -40,7 +40,7 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
     case BecomeUnreachable(_) =>
       start = Some(System.nanoTime())
     case Reconfigure(implementationClass, threshold, step) =>
-      log.info(s"Reconfiguring node to use $implementationClass with threshold $threshold")
+      log.info(s"Reconfiguring node to use $implementationClass with threshold $threshold at step $step")
       sender() ! ReconfigurationAck
       cluster.leave(cluster.selfAddress)
       shutdown(Map(

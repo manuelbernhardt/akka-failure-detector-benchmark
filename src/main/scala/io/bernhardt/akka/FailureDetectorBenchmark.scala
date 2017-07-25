@@ -17,6 +17,8 @@ object FailureDetectorBenchmark {
 
   val Manager = "benchmark-coordinator-singleton-manager"
 
+  var step = 0
+
   def main(args: Array[String]) = {
     val props: Map[String, String] = args.flatMap { arg =>
       if (arg.startsWith("-D") && arg.contains("=")) {
@@ -34,7 +36,6 @@ object FailureDetectorBenchmark {
     import scala.collection.JavaConverters._
     val systemName = Option(System.getenv("SYSTEM_NAME")).getOrElse("akka-fd-benchmark")
     val config = ConfigFactory.parseMap(properties.asJava).withFallback(ConfigFactory.load())
-    val step = Option(config.getInt("benchmark.step")).getOrElse("0")
     val system: ActorSystem = ActorSystem(s"$systemName-$step", config)
     val coordinatorSingletonManager = system.actorOf(
       ClusterSingletonManager.props(
@@ -67,7 +68,7 @@ object FailureDetectorBenchmark {
       _ <- system.whenTerminated
     } yield shutdown.properties).recover { case NonFatal(_) => properties }
 
-    // if the system terminates unexpectedly we still want to restart using the previous properties
+    // if the system terminates unexpectedly we still want to restart it using the previous properties
     system.whenTerminated.foreach { _ =>
       if (!f.isCompleted) {
         startSystem(properties)
@@ -75,6 +76,10 @@ object FailureDetectorBenchmark {
     }
 
     val props = Await.result(termination, Duration.Inf)
+
+    // save the step so that we do create the system with the right name on subsequent shutdown
+    step = props.get("benchmark.step").map(_.toInt).getOrElse(0)
+
     startSystem(props)
   }
 }
