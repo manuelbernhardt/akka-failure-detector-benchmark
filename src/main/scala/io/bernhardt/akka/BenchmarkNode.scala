@@ -22,7 +22,7 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
 
   override def preStart() = {
     super.preStart()
-    log.info("Started node at {}", cluster.selfUniqueAddress)
+    log.info("Started node at {} in system {}", cluster.selfUniqueAddress, context.system.name)
     cluster.subscribe(self, ClusterEvent.initialStateAsEvents, classOf[UnreachableMember])
   }
 
@@ -42,6 +42,7 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
     case Reconfigure(implementationClass, threshold, step) =>
       log.info(s"Reconfiguring node to use $implementationClass with threshold $threshold")
       sender() ! ReconfigurationAck
+      cluster.leave(cluster.selfAddress)
       shutdown(Map(
         "akka.cluster.failure-detector.threshold" -> threshold.toString,
         "akka.cluster.failure-detector.implementation-class" -> implementationClass,
