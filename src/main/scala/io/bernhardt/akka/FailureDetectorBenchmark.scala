@@ -54,7 +54,7 @@ object FailureDetectorBenchmark {
     val cluster = Cluster(system)
     ClusterHttpManagement(cluster).start()
 
-    val node = system.actorOf(BenchmarkNode.props(coordinatorSingletonProxy), "benchmark-node")
+    val node = system.actorOf(BenchmarkNode.props(coordinatorSingletonProxy, properties), "benchmark-node")
 
     import scala.concurrent.ExecutionContext.Implicits.global
     implicit val timeout = Timeout(1.hour)
@@ -66,7 +66,7 @@ object FailureDetectorBenchmark {
       shutdown <- f
       _ <- system.terminate()
       _ <- system.whenTerminated
-    } yield shutdown.properties).recover { case NonFatal(_) => properties }
+    } yield shutdown.newProperties).recover { case NonFatal(_) => properties }
 
     // if the system terminates unexpectedly we still want to restart it using the previous properties
     system.whenTerminated.foreach { _ =>
@@ -75,13 +75,13 @@ object FailureDetectorBenchmark {
       }
     }
 
-    val props = Await.result(termination, Duration.Inf)
+    val newProperties = Await.result(termination, Duration.Inf)
 
     // save the step so that we do create the system with the right name on subsequent shutdown
-    step = props.get("benchmark.step").map(_.toInt).getOrElse(0)
+    step = newProperties.get("benchmark.step").map(_.toInt).getOrElse(0)
 
-    startSystem(props)
+    startSystem(newProperties)
   }
 }
 
-case class Shutdown(properties: Map[String, String] = Map.empty)
+case class Shutdown(newProperties: Map[String, String])

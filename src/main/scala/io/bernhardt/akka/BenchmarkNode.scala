@@ -8,7 +8,7 @@ import io.bernhardt.akka.BenchmarkNode._
 
 import scala.concurrent.duration._
 
-class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
+class BenchmarkNode(coordinator: ActorRef, systemProperties: Map[String, String]) extends Actor with ActorLogging {
 
   var systemManager: Option[ActorRef] = None
 
@@ -36,12 +36,12 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
       systemManager = Some(sender())
     case BecomeUnreachable(uniqueAddress) if uniqueAddress == cluster.selfUniqueAddress =>
       log.info("Becoming unreachable by shutting down actor system")
-      shutdown()
+      shutdown(systemProperties)
     case BecomeUnreachable(_) =>
       start = Some(System.nanoTime())
     case Reconfigure(implementationClass, threshold, step) =>
       log.info(s"Reconfiguring node to use $implementationClass with threshold $threshold at step $step")
-      sender() ! ReconfigurationAck
+      sender() ! ReconfigurationAck(cluster.selfUniqueAddress)
       cluster.leave(cluster.selfAddress)
       shutdown(Map(
         "akka.cluster.failure-detector.threshold" -> threshold.toString,
@@ -104,7 +104,7 @@ class BenchmarkNode(coordinator: ActorRef) extends Actor with ActorLogging {
 
 object BenchmarkNode {
 
-  def props(coordinator: ActorRef) = Props(classOf[BenchmarkNode], coordinator)
+  def props(coordinator: ActorRef, systemProperties: Map[String, String]) = Props(classOf[BenchmarkNode], coordinator, systemProperties)
 
   val name = "benchmark-node"
 
